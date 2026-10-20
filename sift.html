@@ -1,0 +1,933 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Sift</title>
+    <link rel="icon" type="image/png" href="images/favicon.png" />
+    <style>
+      :root {
+        --primary: #b1a1ed;
+        --secondary: #7564b4;
+        --accent: #8a70eb;
+        --bg: #211f28;
+        --panel: #131117;
+        --surface: #2f2c3a;
+        --line: #302e38;
+        --text: #f4f4f6;
+        --mute: #9a96a6;
+        --pick: #47d181;
+        --rej: #e45858;
+        --sel: #f4f4f6;
+        --red: #e5484d;
+        --yellow: #e9b949;
+        --green: #46a758;
+        --blue: #3e8ef7;
+        --accent-dark: #7555e7;
+        --rej-dark: #e03e3e;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font:
+          14px/1.45 "Avenir Next",
+          "Segoe UI",
+          system-ui,
+          sans-serif;
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--line);
+        flex-wrap: wrap;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 6px 0 0;
+        letter-spacing: 0.2px;
+      }
+      button {
+        font: inherit;
+        color: var(--text);
+        background: var(--surface);
+        border: 2px solid var(--surface);
+        border-radius: 6px;
+        padding: 6px 11px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: var(--bg);
+      }
+      button:focus-visible,
+      .card:focus-visible {
+        outline: 2px solid var(--sel);
+        outline-offset: 2px;
+      }
+      button.on {
+        background: var(--surface);
+        color: var(--text);
+        border-color: var(--accent);
+      }
+      #open,
+      #apply {
+        background: var(--accent);
+        color: var(--text);
+        font-weight: 600;
+      }
+      #open:hover {
+        background: var(--accent-dark);
+      }
+      #apply {
+        background: var(--rej);
+        color: #fff;
+      }
+      #apply:hover {
+        background: var(--rej-dark);
+      }
+      .sp {
+        flex: 1;
+      }
+      #filters {
+        display: flex;
+        gap: 4px;
+      }
+      #prog {
+        color: var(--mute);
+      }
+      label {
+        color: var(--mute);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      input[type="range"] {
+        accent-color: var(--text);
+      }
+      main {
+        flex: 1;
+        display: flex;
+        min-height: 0;
+      }
+      #grid {
+        --tw: 130px;
+        width: 440px;
+        min-width: 240px;
+        max-width: 75%;
+        resize: horizontal;
+        flex: none;
+        overflow: auto;
+        padding: 10px;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(var(--tw), 1fr));
+        gap: 8px;
+        align-content: start;
+        border-right: 1px solid var(--line);
+      }
+      .card {
+        position: relative;
+        aspect-ratio: 3/2;
+        background: #111;
+        border-radius: 4px;
+        overflow: hidden;
+        cursor: pointer;
+        outline: 2px solid transparent;
+      }
+      .card.hidden {
+        display: none;
+      }
+      .card img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      .card.reject img {
+        opacity: 0.5;
+        filter: grayscale(0.6);
+      }
+      .card.pick {
+        outline-color: var(--pick);
+      }
+      .card.sel {
+        outline-color: var(--sel);
+      }
+      .card .tag {
+        position: absolute;
+        left: 4px;
+        bottom: 4px;
+        font-size: 11px;
+        background: rgba(0, 0, 0, 0.72);
+        padding: 1px 5px;
+        border-radius: 3px;
+      }
+      .card .st {
+        position: absolute;
+        right: 4px;
+        top: 4px;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 1px 5px;
+        border-radius: 3px;
+        color: #111;
+      }
+      .card.pick .st {
+        background: var(--pick);
+      }
+      .card.reject .st {
+        background: var(--rej);
+      }
+      .card .dot {
+        position: absolute;
+        left: 4px;
+        top: 4px;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+      }
+      .card .stars {
+        position: absolute;
+        right: 4px;
+        bottom: 4px;
+        font-size: 11px;
+        color: var(--yellow);
+        text-shadow: 0 0 3px #000;
+      }
+      #view {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      #stage {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: auto;
+        background: var(--panel);
+      }
+      #big {
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+        cursor: zoom-in;
+      }
+      #big.z {
+        max-width: none;
+        max-height: none;
+        object-fit: none;
+        cursor: zoom-out;
+      }
+      #empty {
+        max-width: 420px;
+        text-align: center;
+        color: var(--mute);
+        padding: 20px;
+      }
+      #empty b {
+        color: var(--text);
+        display: block;
+        font-size: 20px;
+        margin-bottom: 8px;
+      }
+      #info {
+        padding: 12px 16px;
+        border-top: 1px solid var(--line);
+        background: var(--panel);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 22px;
+        align-items: center;
+      }
+      #info .name {
+        font-weight: 600;
+      }
+      .chip {
+        display: inline-block;
+        padding: 1px 8px;
+        border-radius: 10px;
+        background: #3a2523;
+        color: #ffb4ae;
+        font-size: 12px;
+        margin-right: 4px;
+      }
+      .chip.ok {
+        background: #1f3a2c;
+        color: #9be0bd;
+      }
+      .stars button {
+        padding: 2px 5px;
+        background: none;
+        border: none;
+        font-size: 18px;
+        color: #555;
+      }
+      .stars button.f {
+        color: var(--yellow);
+      }
+      .sw {
+        display: inline-block;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        border: 2px solid transparent;
+        padding: 0;
+        margin-right: 5px;
+        vertical-align: middle;
+      }
+      .sw.on {
+        border-color: var(--sel);
+      }
+      .keys {
+        color: var(--mute);
+        font-size: 12px;
+        width: 100%;
+      }
+      @media (max-width: 800px) {
+        main {
+          flex-direction: column;
+        }
+        #grid {
+          width: 100%;
+          height: 30%;
+          border-right: 0;
+          grid-template-columns: repeat(4, 1fr);
+        }
+      }
+      @media (prefers-reduced-motion: no-preference) {
+        .card img {
+          transition: opacity 0.15s;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Sift</h1>
+      <button id="open">Open folder</button>
+      <span id="prog"></span>
+      <div class="sp"></div>
+      <div id="filters">
+        <button data-f="all" class="on">All</button
+        ><button data-f="open">Undecided</button
+        ><button data-f="flag">Flagged</button
+        ><button data-f="pick">Picks</button
+        ><button data-f="reject">Rejects</button>
+      </div>
+      <button id="csv">Export list</button>
+      <button id="apply">Move rejects</button>
+    </header>
+    <main>
+      <section id="grid" aria-label="Photos"></section>
+      <section id="view">
+        <div id="stage">
+          <div id="empty">
+            <b>Pick a folder of JPEGs to start</b>Sift flags blurry shots,
+            closed eyes, bad exposure and near duplicates, and keeps the best of
+            each burst. You make the final call, and nothing is deleted.
+          </div>
+          <img id="big" alt="" hidden />
+        </div>
+        <div id="info"></div>
+      </section>
+    </main>
+    <script>
+      const $ = (s) => document.querySelector(s);
+      const COLORS = {
+        red: "#e5484d",
+        yellow: "#e9b949",
+        green: "#46a758",
+        blue: "#3e8ef7",
+      };
+      const KEYCOL = { 6: "red", 7: "yellow", 8: "green", 9: "blue" };
+      let dir,
+        photos = [],
+        cur = 0,
+        filter = "all",
+        landmarker = null,
+        url = null,
+        zoom = false;
+
+      const prog = (t) => ($("#prog").textContent = t);
+      const vis = (p) =>
+        filter === "all" ||
+        (filter === "pick" && p.status === "pick") ||
+        (filter === "reject" && p.status === "reject") ||
+        (filter === "flag" && p.reasons.length > 0) ||
+        (filter === "open" && !p.status);
+      const ham = (a, b) => {
+        let n = 0;
+        for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) n++;
+        return n;
+      };
+
+      /* ---------- EXIF capture time ---------- */
+      async function exifTime(file) {
+        try {
+          const b = new DataView(await file.slice(0, 65536).arrayBuffer());
+          if (b.getUint16(0) !== 0xffd8) return 0;
+          let o = 2;
+          while (o < b.byteLength - 4) {
+            const m = b.getUint16(o),
+              l = b.getUint16(o + 2);
+            if (m === 0xffe1 && b.getUint32(o + 4) === 0x45786966)
+              return tiffTime(b, o + 10);
+            if ((m & 0xff00) !== 0xff00) break;
+            o += 2 + l;
+          }
+        } catch (e) {}
+        return 0;
+      }
+      function tiffTime(b, t) {
+        const le = b.getUint16(t) === 0x4949;
+        const g16 = (o) => b.getUint16(o, le),
+          g32 = (o) => b.getUint32(o, le);
+        const find = (ifd, tag) => {
+          const n = g16(ifd);
+          for (let i = 0; i < n; i++) {
+            const e = ifd + 2 + i * 12;
+            if (g16(e) === tag) return e;
+          }
+          return -1;
+        };
+        const ex = find(t + g32(t + 4), 0x8769);
+        if (ex < 0) return 0;
+        const e = find(t + g32(ex + 8), 0x9003);
+        if (e < 0) return 0;
+        let s = "";
+        const so = t + g32(e + 8);
+        for (let i = 0; i < 19; i++)
+          s += String.fromCharCode(b.getUint8(so + i));
+        const m = s.match(/(\d+):(\d+):(\d+) (\d+):(\d+):(\d+)/);
+        return m ? Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : 0;
+      }
+
+      /* ---------- Eye check (MediaPipe, loaded once from the web) ---------- */
+      async function initFaces() {
+        try {
+          const base =
+            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+          const { FaceLandmarker, FilesetResolver } = await import(
+            base + "/vision_bundle.mjs"
+          );
+          const fs = await FilesetResolver.forVisionTasks(base + "/wasm");
+          landmarker = await FaceLandmarker.createFromOptions(fs, {
+            baseOptions: {
+              modelAssetPath:
+                "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+            },
+            runningMode: "IMAGE",
+            numFaces: 8,
+            outputFaceBlendshapes: true,
+          });
+        } catch (e) {
+          landmarker = null;
+        }
+      }
+
+      /* ---------- Per-photo analysis ---------- */
+      async function analyze(p) {
+        const im = await decodeImg(p.file);
+        const w = im.naturalWidth,
+          h = im.naturalHeight,
+          fw = 1024,
+          fh = Math.max(16, Math.round((1024 * h) / w));
+        const fc = new OffscreenCanvas(fw, fh),
+          fx = fc.getContext("2d", { willReadFrequently: true });
+        fx.imageSmoothingQuality = "high";
+        fx.drawImage(im, 0, 0, fw, fh);
+        const tc = new OffscreenCanvas(
+          360,
+          Math.max(1, Math.round((360 * fh) / fw)),
+        );
+        const tx = tc.getContext("2d", { willReadFrequently: true });
+        tx.imageSmoothingQuality = "high";
+        tx.drawImage(fc, 0, 0, tc.width, tc.height);
+        p.thumb = URL.createObjectURL(
+          await tc.convertToBlob({ type: "image/jpeg", quality: 0.8 }),
+        );
+
+        const gw = 512,
+          gh = Math.max(16, Math.round((512 * h) / w));
+        const c = new OffscreenCanvas(gw, gh),
+          x = c.getContext("2d", { willReadFrequently: true });
+        x.imageSmoothingQuality = "high";
+        x.drawImage(fc, 0, 0, gw, gh);
+        const d = x.getImageData(0, 0, gw, gh).data,
+          g = new Float32Array(gw * gh);
+        let sum = 0;
+        for (let i = 0; i < g.length; i++) {
+          const v =
+            0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2];
+          g[i] = v;
+          sum += v;
+        }
+        p.luma = sum / g.length;
+
+        // sharpness: Laplacian variance per tile, averaged over the sharpest tiles (so soft backgrounds don't count against a sharp subject)
+        const T = 8,
+          tw = Math.floor(gw / T),
+          th = Math.floor(gh / T),
+          sc = [];
+        for (let ty = 0; ty < T; ty++)
+          for (let tx = 0; tx < T; tx++) {
+            let s = 0,
+              s2 = 0,
+              n = 0;
+            for (let y = ty * th + 1; y < (ty + 1) * th - 1; y++)
+              for (let xx = tx * tw + 1; xx < (tx + 1) * tw - 1; xx++) {
+                const i = y * gw + xx,
+                  l = g[i - 1] + g[i + 1] + g[i - gw] + g[i + gw] - 4 * g[i];
+                s += l;
+                s2 += l * l;
+                n++;
+              }
+            sc.push(s2 / n - (s / n) ** 2);
+          }
+        sc.sort((a, b) => b - a);
+        p.sharp = sc.slice(0, 6).reduce((a, b) => a + b, 0) / 6;
+
+        // difference hash for near-duplicate matching
+        const hc = new OffscreenCanvas(9, 8),
+          hx = hc.getContext("2d", { willReadFrequently: true });
+        hx.imageSmoothingQuality = "high";
+        hx.drawImage(c, 0, 0, 9, 8);
+        const hd = hx.getImageData(0, 0, 9, 8).data;
+        p.hash = [];
+        for (let y = 0; y < 8; y++)
+          for (let xx = 0; xx < 8; xx++)
+            p.hash.push(
+              hd[(y * 9 + xx) * 4 + 1] > hd[(y * 9 + xx + 1) * 4 + 1] ? 1 : 0,
+            );
+
+        if (landmarker) {
+          const r = landmarker.detect(bm);
+          p.faces = r.faceBlendshapes.length;
+          r.faceBlendshapes.forEach((f) => {
+            const m = {};
+            f.categories.forEach((k) => (m[k.categoryName] = k.score));
+            if ((m.eyeBlinkLeft + m.eyeBlinkRight) / 2 > 0.55) p.closed++;
+          });
+        }
+        bm.close();
+      }
+
+      /* ---------- Auto decisions (re-run when the slider moves) ---------- */
+      function decide() {
+        photos.sort((a, b) => a.time - b.time || a.name.localeCompare(b.name));
+        const med =
+          photos.map((p) => p.sharp).sort((a, b) => a - b)[
+            photos.length >> 1
+          ] || 1;
+        const thr = $("#blur").value / 100;
+        photos.forEach((p) => {
+          p.group = -1;
+          p.reasons = [];
+          p.best = false;
+          p.gsize = 1;
+          p.q =
+            (p.sharp / med) *
+            (p.closed ? 0.3 : 1) *
+            (p.luma < 35 || p.luma > 225 ? 0.6 : 1);
+        });
+
+        let gid = 0;
+        for (let i = 1; i < photos.length; i++) {
+          for (let j = i - 1; j >= Math.max(0, i - 6); j--) {
+            const a = photos[j],
+              b = photos[i];
+            const near =
+              a.hasTime && b.hasTime
+                ? Math.abs(b.time - a.time) <= 20000
+                : true;
+            if (near && ham(a.hash, b.hash) <= 10) {
+              if (a.group < 0) a.group = gid++;
+              b.group = a.group;
+              break;
+            }
+          }
+        }
+        const groups = {};
+        photos.forEach((p) => {
+          if (p.group >= 0) (groups[p.group] = groups[p.group] || []).push(p);
+        });
+        Object.values(groups).forEach((g) => {
+          g.sort((a, b) => b.q - a.q);
+          g[0].best = true;
+          g.forEach((p) => (p.gsize = g.length));
+        });
+
+        let flagged = 0;
+        photos.forEach((p) => {
+          if (p.sharp < thr * med) p.reasons.push("Blurry");
+          if (p.closed)
+            p.reasons.push(
+              p.closed > 1
+                ? "Eyes closed (" + p.closed + " people)"
+                : "Eyes closed",
+            );
+          if (p.luma < 35) p.reasons.push("Too dark");
+          if (p.luma > 225) p.reasons.push("Too bright");
+          if (p.group >= 0 && !p.best)
+            p.reasons.push("Duplicate of a better shot");
+          if (!p.manual) p.status = p.reasons.length ? "reject" : "";
+          if (p.status === "reject" && !p.manual) flagged++;
+        });
+        return flagged;
+      }
+
+      /* ---------- Loading a folder ---------- */
+      async function load() {
+        photos = [];
+        prog("Preparing the eye check…");
+        await initFaces();
+        const handles = [];
+        for await (const h of dir.values())
+          if (h.kind === "file" && /\.jpe?g$/i.test(h.name)) handles.push(h);
+        if (!handles.length) {
+          prog("No JPEG files in that folder.");
+          return;
+        }
+        for (let i = 0; i < handles.length; i++) {
+          const file = await handles[i].getFile();
+          const p = {
+            file,
+            name: file.name,
+            status: "",
+            stars: 0,
+            color: "",
+            closed: 0,
+            faces: 0,
+            reasons: [],
+            manual: false,
+          };
+          p.time = await exifTime(file);
+          p.hasTime = !!p.time;
+          if (!p.time) p.time = file.lastModified;
+          try {
+            await analyze(p);
+          } catch (e) {
+            continue;
+          }
+          photos.push(p);
+          prog("Analyzing " + (i + 1) + " of " + handles.length);
+        }
+        const n = decide();
+        cur = 0;
+        prog(
+          photos.length +
+            " photos, " +
+            n +
+            " flagged for rejection." +
+            (landmarker
+              ? ""
+              : " The eye check is off because the model could not load."),
+        );
+        renderAll();
+      }
+
+      /* ---------- Rendering ---------- */
+      const card = (i) => {
+        const p = photos[i];
+        const tag =
+          p.group >= 0 ? (p.best ? "Best of " + p.gsize : "Duplicate") : "";
+        return (
+          '<div class="card ' +
+          p.status +
+          (i === cur ? " sel" : "") +
+          (vis(p) ? "" : " hidden") +
+          '" id="c' +
+          i +
+          '" data-i="' +
+          i +
+          '" tabindex="0" role="button" aria-label="' +
+          p.name +
+          '">' +
+          '<img src="' +
+          p.thumb +
+          '" alt="">' +
+          (p.color
+            ? '<span class="dot" style="background:' +
+              COLORS[p.color] +
+              '"></span>'
+            : "") +
+          (p.status
+            ? '<span class="st">' +
+              (p.status === "pick" ? "Pick" : "Reject") +
+              "</span>"
+            : "") +
+          (tag ? '<span class="tag">' + tag + "</span>" : "") +
+          (p.stars
+            ? '<span class="stars">' + "★".repeat(p.stars) + "</span>"
+            : "") +
+          "</div>"
+        );
+      };
+      const paint = (i) => {
+        const el = document.getElementById("c" + i);
+        if (el) el.outerHTML = card(i);
+      };
+      function renderAll() {
+        $("#grid").innerHTML = photos.map((_, i) => card(i)).join("");
+        if (photos.length && !vis(photos[cur])) {
+          const n = photos.findIndex(vis);
+          if (n >= 0) cur = n;
+        }
+        showBig();
+      }
+      function showBig() {
+        const p = photos[cur],
+          big = $("#big");
+        document
+          .querySelectorAll(".card.sel")
+          .forEach((e) => e.classList.remove("sel"));
+        if (!p) {
+          big.hidden = true;
+          $("#empty").hidden = false;
+          $("#info").innerHTML = "";
+          return;
+        }
+        $("#empty").hidden = true;
+        big.hidden = false;
+        if (url) URL.revokeObjectURL(url);
+        url = URL.createObjectURL(p.file);
+        big.src = url;
+        big.className = zoom ? "z" : "";
+        const el = document.getElementById("c" + cur);
+        if (el) {
+          el.classList.add("sel");
+          el.scrollIntoView({ block: "nearest" });
+        }
+        info();
+      }
+      function info() {
+        const p = photos[cur];
+        if (!p) return;
+        const chips =
+          p.reasons.map((r) => '<span class="chip">' + r + "</span>").join("") +
+          (p.best && p.gsize > 1
+            ? '<span class="chip ok">Best of ' +
+              p.gsize +
+              " similar shots</span>"
+            : "") +
+          (!p.reasons.length && !p.best
+            ? '<span class="chip ok">No problems found</span>'
+            : "");
+        $("#info").innerHTML =
+          '<span class="name">' +
+          p.name +
+          "</span><span>" +
+          chips +
+          "</span>" +
+          '<span class="stars">' +
+          [1, 2, 3, 4, 5]
+            .map(
+              (n) =>
+                '<button data-star="' +
+                n +
+                '" class="' +
+                (p.stars >= n ? "f" : "") +
+                '" aria-label="' +
+                n +
+                ' stars">★</button>',
+            )
+            .join("") +
+          "</span>" +
+          "<span>" +
+          Object.keys(COLORS)
+            .map(
+              (c) =>
+                '<button class="sw' +
+                (p.color === c ? " on" : "") +
+                '" data-color="' +
+                c +
+                '" style="background:' +
+                COLORS[c] +
+                '" aria-label="' +
+                c +
+                ' label"></button>',
+            )
+            .join("") +
+          "</span>" +
+          '<span><button data-st="pick">Pick</button> <button data-st="reject">Reject</button> <button data-st="">Clear</button></span>' +
+          '<div class="keys">Keys: arrows move, P pick, X reject, U clear, 1–5 stars, 0 no stars, 6–9 red/yellow/green/blue, Z zoom</div>';
+      }
+      function go(d) {
+        let i = cur + d;
+        while (i >= 0 && i < photos.length && !vis(photos[i])) i += d;
+        if (i >= 0 && i < photos.length) {
+          const o = cur;
+          cur = i;
+          paint(o);
+          showBig();
+        }
+      }
+      function setStatus(p, s, adv) {
+        p.status = s;
+        p.manual = true;
+        paint(cur);
+        info();
+        if (adv && s) go(1);
+      }
+
+      /* ---------- Events ---------- */
+      $("#open").onclick = async () => {
+        if (!window.showDirectoryPicker) {
+          alert(
+            "Open this file in Chrome or Edge on a computer to use folder access.",
+          );
+          return;
+        }
+        try {
+          dir = await showDirectoryPicker({ mode: "readwrite" });
+        } catch (e) {
+          return;
+        }
+        await load();
+      };
+      $("#grid").onclick = (e) => {
+        const c = e.target.closest(".card");
+        if (!c) return;
+        const o = cur;
+        cur = +c.dataset.i;
+        paint(o);
+        showBig();
+      };
+      $("#grid").onkeydown = (e) => {
+        if (e.key === "Enter" && e.target.classList.contains("card"))
+          e.target.click();
+      };
+      $("#big").onclick = () => {
+        zoom = !zoom;
+        $("#big").className = zoom ? "z" : "";
+      };
+      $("#filters").onclick = (e) => {
+        const f = e.target.dataset.f;
+        if (!f) return;
+        filter = f;
+        document
+          .querySelectorAll("#filters button")
+          .forEach((b) => b.classList.toggle("on", b.dataset.f === f));
+        renderAll();
+      };
+      $("#tsize").oninput = (e) =>
+        $("#grid").style.setProperty("--tw", e.target.value + "px");
+      $("#blur").oninput = () => {
+        if (!photos.length) return;
+        const n = decide();
+        prog(photos.length + " photos, " + n + " flagged for rejection.");
+        renderAll();
+      };
+      $("#info").onclick = (e) => {
+        const p = photos[cur],
+          t = e.target;
+        if (!p) return;
+        if (t.dataset.star) {
+          p.stars = p.stars === +t.dataset.star ? 0 : +t.dataset.star;
+          paint(cur);
+          info();
+        } else if (t.dataset.color) {
+          p.color = p.color === t.dataset.color ? "" : t.dataset.color;
+          paint(cur);
+          info();
+        } else if (t.dataset.st !== undefined) setStatus(p, t.dataset.st, true);
+      };
+      addEventListener("keydown", (e) => {
+        if (!photos.length || e.metaKey || e.ctrlKey || e.altKey) return;
+        const p = photos[cur],
+          k = e.key.toLowerCase();
+        if (k === "arrowright" || k === "arrowdown") go(1);
+        else if (k === "arrowleft" || k === "arrowup") go(-1);
+        else if (k === "p") setStatus(p, "pick", true);
+        else if (k === "x") setStatus(p, "reject", true);
+        else if (k === "u") setStatus(p, "", false);
+        else if (k === "z" || k === " ") {
+          zoom = !zoom;
+          $("#big").className = zoom ? "z" : "";
+        } else if (k >= "0" && k <= "5") {
+          p.stars = +k;
+          paint(cur);
+          info();
+        } else if (KEYCOL[k]) {
+          p.color = p.color === KEYCOL[k] ? "" : KEYCOL[k];
+          paint(cur);
+          info();
+        } else return;
+        e.preventDefault();
+      });
+
+      /* ---------- Output ---------- */
+      $("#csv").onclick = () => {
+        if (!photos.length) return;
+        const rows = [["file", "decision", "stars", "color", "flags"]].concat(
+          photos.map((p) => [
+            p.name,
+            p.status || "undecided",
+            p.stars,
+            p.color,
+            p.reasons.join("; "),
+          ]),
+        );
+        const csv = rows
+          .map((r) =>
+            r.map((v) => '"' + String(v).replace(/"/g, '""') + '"').join(","),
+          )
+          .join("\n");
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+        a.download = "culling-results.csv";
+        a.click();
+      };
+      $("#apply").onclick = async () => {
+        const rej = photos.filter((p) => p.status === "reject");
+        if (!rej.length) {
+          alert("No photos are marked as rejected.");
+          return;
+        }
+        if (
+          !confirm(
+            "Move " +
+              rej.length +
+              " rejected photos into a “_Rejected” folder inside this folder? Nothing is deleted.",
+          )
+        )
+          return;
+        try {
+          const rd = await dir.getDirectoryHandle("_Rejected", {
+            create: true,
+          });
+          for (let i = 0; i < rej.length; i++) {
+            const p = rej[i];
+            prog("Moving " + (i + 1) + " of " + rej.length);
+            const w = await (
+              await rd.getFileHandle(p.name, { create: true })
+            ).createWritable();
+            await w.write(p.file);
+            await w.close();
+            await dir.removeEntry(p.name);
+            p.moved = true;
+          }
+        } catch (e) {
+          alert("Could not move every file: " + e.message);
+        }
+        photos = photos.filter((p) => !p.moved);
+        cur = 0;
+        prog(photos.length + " photos left in the folder.");
+        renderAll();
+      };
+    </script>
+  </body>
+</html>

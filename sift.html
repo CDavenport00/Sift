@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Sift</title>
+    <title>Sift | Photo Culling</title>
     <link rel="icon" type="image/png" href="images/favicon.png" />
     <style>
       :root {
@@ -81,13 +81,19 @@
         border-color: var(--accent);
       }
       #open,
+      #start,
       #apply {
         background: var(--accent);
         color: var(--text);
         font-weight: 600;
       }
-      #open:hover {
+      #open:hover,
+      #start:hover:not(:disabled) {
         background: var(--accent-dark);
+      }
+      #start:disabled {
+        opacity: 0.55;
+        cursor: default;
       }
       #apply {
         background: var(--rej);
@@ -131,6 +137,7 @@
         padding: 10px;
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(var(--tw), 1fr));
+        grid-auto-rows: max-content;
         gap: 8px;
         align-content: start;
         border-right: 1px solid var(--line);
@@ -148,10 +155,11 @@
         display: none;
       }
       .card img {
+        position: absolute;
+        inset: 0;
         width: 100%;
         height: 100%;
         object-fit: cover;
-        display: block;
       }
       .card.reject img {
         opacity: 0.5;
@@ -195,6 +203,25 @@
         width: 10px;
         height: 10px;
         border-radius: 50%;
+      }
+      .category-options {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+      }
+      .category-options button {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 4px 7px;
+        font-size: 12px;
+      }
+      .category-dot {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        flex: none;
       }
       .card .stars {
         position: absolute;
@@ -318,8 +345,17 @@
     <header>
       <h1>Sift</h1>
       <button id="open">Open folder</button>
+      <button id="start" disabled>Analyze photos</button>
       <span id="prog"></span>
       <div class="sp"></div>
+      <label
+        >Thumb size
+        <input id="tsize" type="range" min="90" max="260" value="130"
+      /></label>
+      <label
+        >Blur threshold
+        <input id="blur" type="range" min="10" max="100" value="35"
+      /></label>
       <div id="filters">
         <button data-f="all" class="on">All</button
         ><button data-f="open">Undecided</button
@@ -328,7 +364,7 @@
         ><button data-f="reject">Rejects</button>
       </div>
       <button id="csv">Export list</button>
-      <button id="apply">Move rejects</button>
+      <button id="apply">Sort photos</button>
     </header>
     <main>
       <section id="grid" aria-label="Photos"></section>
@@ -346,20 +382,30 @@
     </main>
     <script>
       const $ = (s) => document.querySelector(s);
-      const COLORS = {
-        red: "#e5484d",
-        yellow: "#e9b949",
-        green: "#46a758",
-        blue: "#3e8ef7",
+      const CATEGORIES = {
+        CKIDS: "#e5484d",
+        "Student Ministry": "#e9b949",
+        Service: "#46a758",
+        Lobby: "#3e8ef7",
       };
-      const KEYCOL = { 6: "red", 7: "yellow", 8: "green", 9: "blue" };
+      const KEYCAT = {
+        6: "CKIDS",
+        7: "Student Ministry",
+        8: "Service",
+        9: "Lobby",
+      };
+      const CACHE_VERSION = 1;
+      const CACHE_FILE = "_SiftCache.json";
       let dir,
         photos = [],
         cur = 0,
         filter = "all",
         landmarker = null,
         url = null,
-        zoom = false;
+        zoom = false,
+        savedCache = { version: CACHE_VERSION, photos: {} },
+        cacheWriteQueue = Promise.resolve(),
+        analyzing = false;
 
       const prog = (t) => ($("#prog").textContent = t);
       const vis = (p) =>
@@ -373,6 +419,84 @@
         for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) n++;
         return n;
       };
+
+      async function readFolderCache(targetDir = dir) {
+        try {
+          const handle = await targetDir.getFileHandle(CACHE_FILE);
+          const data = JSON.parse(await (await handle.getFile()).text());
+          if (
+            data.version === CACHE_VERSION &&
+            data.photos &&
+            typeof data.photos === "object"
+          )
+            return data;
+        } catch (e) {}
+        return { version: CACHE_VERSION, photos: {} };
+      }
+      function cacheRecord(p, file = p.file) {
+        return {
+          size: file.size,
+          lastModified: file.lastModified,
+          analysis: p.analyzed
+            ? {
+                sharp: p.sharp,
+                luma: p.luma,
+                hash: p.hash,
+                closed: p.closed,
+                faces: p.faces,
+              }
+            : null,
+          review: {
+            status: p.manual ? p.status : "",
+            manual: p.manual,
+            stars: p.stars,
+            category: p.category,
+          },
+        };
+      }
+      async function writeFolderCache(targetDir, records, merge = false) {
+        const write = cacheWriteQueue
+          .catch(() => {})
+          .then(async () => {
+            const existing = merge
+              ? await readFolderCache(targetDir)
+              : { photos: {} };
+            const handle = await targetDir.getFileHandle(CACHE_FILE, {
+              create: true,
+            });
+            const writable = await handle.createWritable();
+            await writable.write(
+              JSON.stringify({
+                version: CACHE_VERSION,
+                photos: { ...existing.photos, ...records },
+              }),
+            );
+            await writable.close();
+          });
+        cacheWriteQueue = write;
+        try {
+          await write;
+          return true;
+        } catch (e) {
+          prog("Could not save cache file: " + e.message);
+          return false;
+        }
+      }
+      async function saveFolderCache() {
+        if (!dir) return false;
+        const records = Object.fromEntries(
+          photos.map((p) => [p.name, cacheRecord(p)]),
+        );
+        return writeFolderCache(dir, records);
+      }
+      function updateStartButton() {
+        const pending = photos.filter((p) => !p.analyzed).length;
+        $("#start").disabled = analyzing || pending === 0;
+        $("#open").disabled = analyzing;
+        $("#start").textContent = pending
+          ? "Analyze " + pending + (pending === 1 ? " photo" : " photos")
+          : "All photos analyzed";
+      }
 
       /* ---------- EXIF capture time ---------- */
       async function exifTime(file) {
@@ -440,9 +564,9 @@
 
       /* ---------- Per-photo analysis ---------- */
       async function analyze(p) {
-        const im = await decodeImg(p.file);
-        const w = im.naturalWidth,
-          h = im.naturalHeight,
+        const im = await createImageBitmap(p.file);
+        const w = im.width,
+          h = im.height,
           fw = 1024,
           fh = Math.max(16, Math.round((1024 * h) / w));
         const fc = new OffscreenCanvas(fw, fh),
@@ -456,9 +580,13 @@
         const tx = tc.getContext("2d", { willReadFrequently: true });
         tx.imageSmoothingQuality = "high";
         tx.drawImage(fc, 0, 0, tc.width, tc.height);
-        p.thumb = URL.createObjectURL(
-          await tc.convertToBlob({ type: "image/jpeg", quality: 0.8 }),
-        );
+        p.thumbBlob = await tc.convertToBlob({
+          type: "image/jpeg",
+          quality: 0.8,
+        });
+        if (p.thumb && p.previewThumb) URL.revokeObjectURL(p.thumb);
+        p.thumb = URL.createObjectURL(p.thumbBlob);
+        p.previewThumb = false;
 
         const gw = 512,
           gh = Math.max(16, Math.round((512 * h) / w));
@@ -514,7 +642,7 @@
             );
 
         if (landmarker) {
-          const r = landmarker.detect(bm);
+          const r = landmarker.detect(im);
           p.faces = r.faceBlendshapes.length;
           r.faceBlendshapes.forEach((f) => {
             const m = {};
@@ -522,18 +650,20 @@
             if ((m.eyeBlinkLeft + m.eyeBlinkRight) / 2 > 0.55) p.closed++;
           });
         }
-        bm.close();
+        im.close();
+        p.analyzed = true;
       }
 
       /* ---------- Auto decisions (re-run when the slider moves) ---------- */
       function decide() {
         photos.sort((a, b) => a.time - b.time || a.name.localeCompare(b.name));
+        const analyzed = photos.filter((p) => p.analyzed);
         const med =
-          photos.map((p) => p.sharp).sort((a, b) => a - b)[
-            photos.length >> 1
+          analyzed.map((p) => p.sharp).sort((a, b) => a - b)[
+            analyzed.length >> 1
           ] || 1;
         const thr = $("#blur").value / 100;
-        photos.forEach((p) => {
+        analyzed.forEach((p) => {
           p.group = -1;
           p.reasons = [];
           p.best = false;
@@ -545,10 +675,10 @@
         });
 
         let gid = 0;
-        for (let i = 1; i < photos.length; i++) {
+        for (let i = 1; i < analyzed.length; i++) {
           for (let j = i - 1; j >= Math.max(0, i - 6); j--) {
-            const a = photos[j],
-              b = photos[i];
+            const a = analyzed[j],
+              b = analyzed[i];
             const near =
               a.hasTime && b.hasTime
                 ? Math.abs(b.time - a.time) <= 20000
@@ -561,7 +691,7 @@
           }
         }
         const groups = {};
-        photos.forEach((p) => {
+        analyzed.forEach((p) => {
           if (p.group >= 0) (groups[p.group] = groups[p.group] || []).push(p);
         });
         Object.values(groups).forEach((g) => {
@@ -590,10 +720,13 @@
       }
 
       /* ---------- Loading a folder ---------- */
-      async function load() {
+      async function loadFolder() {
+        photos.forEach((p) => {
+          if (p.thumb) URL.revokeObjectURL(p.thumb);
+        });
         photos = [];
-        prog("Preparing the eye check…");
-        await initFaces();
+        prog("Loading photos and checking the cache…");
+        savedCache = await readFolderCache();
         const handles = [];
         for await (const h of dir.values())
           if (h.kind === "file" && /\.jpe?g$/i.test(h.name)) handles.push(h);
@@ -608,33 +741,87 @@
             name: file.name,
             status: "",
             stars: 0,
-            color: "",
+            category: "",
             closed: 0,
             faces: 0,
             reasons: [],
             manual: false,
+            analyzed: false,
           };
           p.time = await exifTime(file);
           p.hasTime = !!p.time;
           if (!p.time) p.time = file.lastModified;
-          try {
-            await analyze(p);
-          } catch (e) {
-            continue;
+          p.thumb = URL.createObjectURL(file);
+          p.previewThumb = true;
+          const cached = savedCache.photos[p.name];
+          if (
+            cached &&
+            cached.size === file.size &&
+            cached.lastModified === file.lastModified
+          ) {
+            const analysis = cached.analysis;
+            if (analysis && Array.isArray(analysis.hash))
+              Object.assign(p, analysis, { analyzed: true });
+            const review = cached.review || {};
+            p.manual = !!review.manual;
+            p.status = p.manual ? review.status || "" : "";
+            p.stars = Number.isInteger(review.stars)
+              ? Math.max(0, Math.min(5, review.stars))
+              : 0;
+            p.category = Object.hasOwn(CATEGORIES, review.category)
+              ? review.category
+              : "";
           }
           photos.push(p);
-          prog("Analyzing " + (i + 1) + " of " + handles.length);
+          prog("Loaded " + (i + 1) + " of " + handles.length);
         }
-        const n = decide();
+        const cachedCount = photos.filter((p) => p.analyzed).length;
+        decide();
         cur = 0;
         prog(
           photos.length +
+            " photos loaded; " +
+            cachedCount +
+            " cached analysis results.",
+        );
+        updateStartButton();
+        renderAll();
+      }
+      async function startAnalysis() {
+        if (analyzing) return;
+        const pending = photos.filter((p) => !p.analyzed);
+        if (!pending.length) return;
+        analyzing = true;
+        updateStartButton();
+        prog("Preparing the eye check…");
+        await initFaces();
+        let completed = 0;
+        const failures = [];
+        for (const p of pending) {
+          try {
+            await analyze(p);
+          } catch (e) {
+            failures.push(p.name + ": " + (e.message || e));
+          }
+          completed++;
+          prog("Analyzing " + completed + " of " + pending.length);
+        }
+        const flagged = decide();
+        const cacheSaved = await saveFolderCache();
+        analyzing = false;
+        updateStartButton();
+        prog(
+          photos.length +
             " photos, " +
-            n +
+            flagged +
             " flagged for rejection." +
             (landmarker
               ? ""
-              : " The eye check is off because the model could not load."),
+              : " The eye check is off because the model could not load.") +
+            (failures.length
+              ? " Could not analyze " + failures.join(", ")
+              : "") +
+            (cacheSaved ? " Cache saved in " + CACHE_FILE + "." : ""),
         );
         renderAll();
       }
@@ -659,9 +846,11 @@
           '<img src="' +
           p.thumb +
           '" alt="">' +
-          (p.color
+          (p.category
             ? '<span class="dot" style="background:' +
-              COLORS[p.color] +
+              CATEGORIES[p.category] +
+              '" title="' +
+              p.category +
               '"></span>'
             : "") +
           (p.status
@@ -723,9 +912,11 @@
               p.gsize +
               " similar shots</span>"
             : "") +
-          (!p.reasons.length && !p.best
-            ? '<span class="chip ok">No problems found</span>'
-            : "");
+          (!p.analyzed
+            ? '<span class="chip">Not analyzed</span>'
+            : !p.reasons.length && !p.best
+              ? '<span class="chip ok">No problems found</span>'
+              : "");
         $("#info").innerHTML =
           '<span class="name">' +
           p.name +
@@ -746,24 +937,26 @@
             )
             .join("") +
           "</span>" +
-          "<span>" +
-          Object.keys(COLORS)
+          '<span class="category-options">' +
+          Object.keys(CATEGORIES)
             .map(
-              (c) =>
-                '<button class="sw' +
-                (p.color === c ? " on" : "") +
-                '" data-color="' +
-                c +
-                '" style="background:' +
-                COLORS[c] +
+              (category) =>
+                '<button data-category="' +
+                category +
+                '" class="' +
+                (p.category === category ? "on" : "") +
                 '" aria-label="' +
-                c +
-                ' label"></button>',
+                category +
+                ' category"><span class="category-dot" style="background:' +
+                CATEGORIES[category] +
+                '"></span>' +
+                category +
+                "</button>",
             )
             .join("") +
-          "</span>" +
+          '<button data-category="" aria-label="Clear ministry category">Clear</button></span>' +
           '<span><button data-st="pick">Pick</button> <button data-st="reject">Reject</button> <button data-st="">Clear</button></span>' +
-          '<div class="keys">Keys: arrows move, P pick, X reject, U clear, 1–5 stars, 0 no stars, 6–9 red/yellow/green/blue, Z zoom</div>';
+          '<div class="keys">Keys: arrows move, P pick, X reject, U clear, 1–5 stars, 0 no stars, 6–9 ministry categories, Z zoom</div>';
       }
       function go(d) {
         let i = cur + d;
@@ -780,6 +973,7 @@
         p.manual = true;
         paint(cur);
         info();
+        saveFolderCache();
         if (adv && s) go(1);
       }
 
@@ -796,8 +990,9 @@
         } catch (e) {
           return;
         }
-        await load();
+        await loadFolder();
       };
+      $("#start").onclick = startAnalysis;
       $("#grid").onclick = (e) => {
         const c = e.target.closest(".card");
         if (!c) return;
@@ -839,10 +1034,13 @@
           p.stars = p.stars === +t.dataset.star ? 0 : +t.dataset.star;
           paint(cur);
           info();
-        } else if (t.dataset.color) {
-          p.color = p.color === t.dataset.color ? "" : t.dataset.color;
+          saveFolderCache();
+        } else if (t.dataset.category !== undefined) {
+          p.category =
+            p.category === t.dataset.category ? "" : t.dataset.category;
           paint(cur);
           info();
+          saveFolderCache();
         } else if (t.dataset.st !== undefined) setStatus(p, t.dataset.st, true);
       };
       addEventListener("keydown", (e) => {
@@ -861,10 +1059,12 @@
           p.stars = +k;
           paint(cur);
           info();
-        } else if (KEYCOL[k]) {
-          p.color = p.color === KEYCOL[k] ? "" : KEYCOL[k];
+          saveFolderCache();
+        } else if (KEYCAT[k]) {
+          p.category = p.category === KEYCAT[k] ? "" : KEYCAT[k];
           paint(cur);
           info();
+          saveFolderCache();
         } else return;
         e.preventDefault();
       });
@@ -872,12 +1072,14 @@
       /* ---------- Output ---------- */
       $("#csv").onclick = () => {
         if (!photos.length) return;
-        const rows = [["file", "decision", "stars", "color", "flags"]].concat(
+        const rows = [
+          ["file", "decision", "stars", "category", "flags"],
+        ].concat(
           photos.map((p) => [
             p.name,
             p.status || "undecided",
             p.stars,
-            p.color,
+            p.category,
             p.reasons.join("; "),
           ]),
         );
@@ -892,40 +1094,80 @@
         a.click();
       };
       $("#apply").onclick = async () => {
-        const rej = photos.filter((p) => p.status === "reject");
-        if (!rej.length) {
-          alert("No photos are marked as rejected.");
+        const moving = photos.filter(
+          (p) => p.status === "reject" || p.category,
+        );
+        if (!moving.length) {
+          alert("No photos are rejected or assigned to a ministry category.");
           return;
         }
         if (
           !confirm(
-            "Move " +
-              rej.length +
-              " rejected photos into a “_Rejected” folder inside this folder? Nothing is deleted.",
+            "Sort " +
+              moving.length +
+              " photos into ministry folders and “_Rejected”? Rejected photos with a category go in a category folder inside “_Rejected”. Nothing is deleted.",
           )
         )
           return;
-        try {
-          const rd = await dir.getDirectoryHandle("_Rejected", {
-            create: true,
-          });
-          for (let i = 0; i < rej.length; i++) {
-            const p = rej[i];
-            prog("Moving " + (i + 1) + " of " + rej.length);
-            const w = await (
-              await rd.getFileHandle(p.name, { create: true })
-            ).createWritable();
+        let moved = 0;
+        const failures = [];
+        const movedCaches = new Map();
+        for (let i = 0; i < moving.length; i++) {
+          const p = moving[i];
+          try {
+            const folders =
+              p.status === "reject"
+                ? ["_Rejected", ...(p.category ? [p.category] : [])]
+                : [p.category];
+            let target = dir;
+            for (const folder of folders)
+              target = await target.getDirectoryHandle(folder, {
+                create: true,
+              });
+            const dot = p.name.lastIndexOf(".");
+            const stem = dot > 0 ? p.name.slice(0, dot) : p.name;
+            const extension = dot > 0 ? p.name.slice(dot) : "";
+            let name = p.name;
+            let suffix = 2;
+            while (true) {
+              try {
+                await target.getFileHandle(name);
+                name = stem + " (" + suffix + ")" + extension;
+                suffix++;
+              } catch (e) {
+                if (e.name !== "NotFoundError") throw e;
+                break;
+              }
+            }
+            const handle = await target.getFileHandle(name, { create: true });
+            const w = await handle.createWritable();
             await w.write(p.file);
             await w.close();
+            const destinationFile = await handle.getFile();
             await dir.removeEntry(p.name);
             p.moved = true;
+            moved++;
+            if (!movedCaches.has(target)) movedCaches.set(target, {});
+            movedCaches.get(target)[name] = cacheRecord(p, destinationFile);
+          } catch (e) {
+            failures.push(p.name + ": " + e.message);
           }
-        } catch (e) {
-          alert("Could not move every file: " + e.message);
+          prog("Sorting " + (i + 1) + " of " + moving.length);
+        }
+        for (const [target, records] of movedCaches) {
+          if (!(await writeFolderCache(target, records, true)))
+            failures.push("cache for " + Object.keys(records).join(", "));
         }
         photos = photos.filter((p) => !p.moved);
         cur = 0;
-        prog(photos.length + " photos left in the folder.");
+        await saveFolderCache();
+        prog(
+          moved +
+            " photos sorted; " +
+            photos.length +
+            " remain." +
+            (failures.length ? " Could not move " + failures.join(", ") : ""),
+        );
         renderAll();
       };
     </script>
